@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#16302f">
+<title>Bilboquet</title>
+<style>
+  :root {
+    --felt: #16302f;
+    --felt-deep: #0e2221;
+    --beech: #d9a866;
+    --beech-dark: #a87a3f;
+    --ball: #c8402f;
+    --chalk: #f2ede1;
+    --chalk-dim: #a9b8b0;
+    color-scheme: dark;
+  }
+  html, body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+    background: var(--felt);
+    color: var(--chalk);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+  [hidden] { display: none !important; }
+
+  #score {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    left: 0; right: 0;
+    text-align: center;
+    pointer-events: none;
+  }
+  #count { font-size: 56px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  #countLabel { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--chalk-dim); }
+  #count.pop { animation: pop 0.45s ease-out; }
+  @keyframes pop { 0% { transform: scale(1); } 35% { transform: scale(1.5); color: var(--beech); } 100% { transform: scale(1); } }
+  @media (prefers-reduced-motion: reduce) { #count.pop { animation: none; } }
+
+  #hint {
+    position: fixed;
+    left: 16px; right: 16px;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 52px);
+    text-align: center;
+    font-size: 15px;
+    pointer-events: none;
+  }
+  #diagToggle {
+    position: fixed;
+    right: max(12px, env(safe-area-inset-right, 0px));
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+    background: none;
+    border: 1px solid var(--chalk-dim);
+    border-radius: 6px;
+    color: var(--chalk-dim);
+    font: inherit;
+    font-size: 13px;
+    padding: 6px 10px;
+  }
+  #diag {
+    position: fixed;
+    left: max(12px, env(safe-area-inset-left, 0px));
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+    margin: 0;
+    font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
+    color: var(--chalk-dim);
+    pointer-events: none;
+    white-space: pre;
+  }
+
+  .overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 16px;
+    padding: 24px max(24px, env(safe-area-inset-right, 0px)) 24px max(24px, env(safe-area-inset-left, 0px));
+    background: var(--felt-deep);
+  }
+  .overlay h1 { font-size: 40px; line-height: 1.1; margin: 0; font-weight: 800; color: var(--beech); }
+  .overlay p { margin: 0; max-width: 34em; }
+  .overlay ol { margin: 0; padding-left: 1.3em; display: grid; gap: 8px; }
+  .warn { color: var(--chalk-dim); font-size: 14px; }
+  .actions { display: grid; gap: 10px; margin-top: 8px; }
+  button.primary, button.secondary { font: inherit; font-weight: 600; padding: 14px 18px; border-radius: 10px; border: 0; }
+  button.primary { background: var(--beech); color: var(--felt-deep); font-size: 18px; }
+  button.secondary { background: none; color: var(--chalk); border: 1px solid var(--chalk-dim); }
+  button:focus-visible { outline: 3px solid var(--chalk); outline-offset: 2px; }
+  #startError { color: #ffb4a6; }
+  #landscape { z-index: 5; text-align: center; align-items: center; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="score">
+  <div id="count">0</div>
+  <div id="countLabel">réussites</div>
+</div>
+<div id="hint"></div>
+<pre id="diag" hidden></pre>
+<button id="diagToggle" type="button" aria-pressed="false">Capteurs</button>
+
+<section id="start" class="overlay">
+  <h1>Bilboquet</h1>
+  <p>Ton téléphone est le manche. Fais sauter la boule et rattrape-la dans la coupelle.</p>
+  <ol>
+    <li>Verrouille la rotation de l'écran en portrait.</li>
+    <li>Tiens le téléphone debout, écran face à toi.</li>
+    <li>Fais balancer la boule, puis donne un coup sec vers le haut en stoppant net.</li>
+  </ol>
+  <p class="warn">Tiens-le fermement et joue loin de tout ce qui se casse&nbsp;: le geste est vif.</p>
+  <p id="startError" hidden></p>
+  <div class="actions">
+    <button id="play" class="primary" type="button">Jouer</button>
+    <button id="demo" class="secondary" type="button">Essayer sans capteur</button>
+  </div>
+</section>
+
+<section id="landscape" class="overlay" hidden>
+  <p>Remets le téléphone en portrait et verrouille la rotation de l'écran pour jouer.</p>
+</section>
+
+<script src="physics.js"></script>
+<script>
+(function () {
+  const B = window.Bilboquet;
+  const cfg = B.CONFIG;
+  const $ = (id) => document.getElementById(id);
+  const canvas = $('game');
+  const ctx = canvas.getContext('2d');
+  const css = getComputedStyle(document.documentElement);
+  const color = (name) => css.getPropertyValue(name).trim();
+
+  const MAX_FORCE = 80;
+  const MAX_OMEGA = 30;
+  const MAX_ALPHA = 200;
+  const CALIBRATION_SAMPLES = 15;
+
+  const state = B.createState();
+  const input = { fx: 0, fy: B.G, omega: 0, alpha: 0 };
+  const detector = B.createRotationDetector();
+  const sensors = { samples: 0, rate: 0, windowStart: 0, windowCount: 0, last: 0, axisSign: 0, streak: 0, streakSign: 0, rawOmega: 0, flat: false };
+  let mode = 'menu'; // menu | calibrating | play | demo
+  let shownCatches = 0;
+  let demoClock = null;
+  let demoMirror = 1;
+
+  const clamp = (v, max) => Math.max(-max, Math.min(max, v));
+
+  // Capteurs -----------------------------------------------------------------
+
+  function calibrate(ax, ay) {
+    if (Math.abs(ay) > 7 && Math.abs(ax) < 4) {
+      const sign = Math.sign(ay);
+      sensors.streak = sign === sensors.streakSign ? sensors.streak + 1 : 1;
+      sensors.streakSign = sign;
+    } else {
+      sensors.streak = 0;
+    }
+    if (sensors.streak >= CALIBRATION_SAMPLES) {
+      // iOS et Android publient des signes opposés : debout, la force mesurée doit pointer vers le haut.
+      sensors.axisSign = sensors.streakSign;
+      mode = 'play';
+      setHint('');
+    }
+  }
+
+  function onMotion(e) {
+    const a = e.accelerationIncludingGravity;
+    if (!a || a.x == null || a.y == null) return;
+    const now = performance.now();
+    const dt = sensors.last ? (now - sensors.last) / 1000 : 0;
+    sensors.last = now;
+    sensors.samples++;
+    sensors.windowCount++;
+    if (now - sensors.windowStart >= 1000) {
+      sensors.rate = sensors.windowCount * 1000 / (now - sensors.windowStart);
+      sensors.windowStart = now;
+      sensors.windowCount = 0;
+    }
+    if (mode === 'calibrating') calibrate(a.x, a.y);
+    if (mode !== 'play') return;
+
+    const fx = clamp(sensors.axisSign * a.x, MAX_FORCE);
+    const fy = clamp(sensors.axisSign * a.y, MAX_FORCE);
+    const r = e.rotationRate || {};
+    const rates = { alpha: r.alpha || 0, beta: r.beta || 0, gamma: r.gamma || 0 };
+    detector.feed(fx, fy, rates, dt);
+    const omega = clamp(detector.omega(rates), MAX_OMEGA);
+    const omegaSmooth = input.omega + 0.5 * (omega - input.omega);
+    if (dt > 0) {
+      const alpha = clamp((omegaSmooth - input.omega) / dt, MAX_ALPHA);
+      input.alpha += 0.3 * (alpha - input.alpha);
+    }
+    input.fx = fx;
+    input.fy = fy;
+    input.omega = omegaSmooth;
+    const flat = Math.hypot(fx, fy) < 4;
+    if (flat !== sensors.flat) {
+      sensors.flat = flat;
+      setHint(flat ? 'Redresse le téléphone : à plat, la boule ne tombe plus.' : '');
+    }
+  }
+
+  function startSensors() {
+    $('startError').hidden = true;
+    if (!window.isSecureContext) return showStartError('Les capteurs exigent une page en HTTPS.');
+    if (typeof DeviceMotionEvent === 'undefined') return showStartError('Ce navigateur ne donne pas accès aux capteurs de mouvement.');
+    // iOS n'accorde cette permission que dans le gestionnaire d'un appui du joueur.
+    const permission = typeof DeviceMotionEvent.requestPermission === 'function'
+      ? DeviceMotionEvent.requestPermission()
+      : Promise.resolve('granted');
+    permission.then((answer) => {
+      if (answer !== 'granted') return showStartError("L'accès aux capteurs a été refusé. Ferme l'onglet et rouvre la page pour répondre à nouveau.");
+      window.addEventListener('devicemotion', onMotion);
+      $('start').hidden = true;
+      mode = 'calibrating';
+      setHint('Tiens le téléphone debout, sans bouger…');
+      keepAwake();
+      setTimeout(() => {
+        if (sensors.samples > 0) return;
+        window.removeEventListener('devicemotion', onMotion);
+        mode = 'menu';
+        $('start').hidden = false;
+        showStartError('Aucune mesure reçue de cet appareil. Essaie sans capteur, ou ouvre la page sur un téléphone.');
+      }, 2000);
+    }, () => showStartError("La demande d'accès aux capteurs a échoué. Recharge la page et réessaie."));
+  }
+
+  function showStartError(message) {
+    $('startError').textContent = message;
+    $('startError').hidden = false;
+  }
+
+  function keepAwake() {
+    if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {});
+  }
+
+  // Mode sans capteur : chaque appui rejoue le geste de référence, du côté touché.
+
+  function startDemo() {
+    $('start').hidden = true;
+    mode = 'demo';
+    setHint('Touche à gauche ou à droite pour lancer la boule.');
+  }
+
+  function playDemoGesture(clientX) {
+    if (mode !== 'demo') return;
+    const catches = state.catches;
+    Object.assign(state, B.createState(), { catches });
+    demoMirror = clientX < window.innerWidth / 2 ? -1 : 1;
+    demoClock = 0;
+    setHint('');
+  }
+
+  function demoInput() {
+    let t = demoClock;
+    for (const [ax, ay, d] of B.DEMO_GESTURE) {
+      if (t < d) return { fx: demoMirror * ax, fy: B.G + ay, omega: 0, alpha: 0 };
+      t -= d;
+    }
+    demoClock = null;
+    return { fx: 0, fy: B.G, omega: 0, alpha: 0 };
+  }
+
+  // Boucle -------------------------------------------------------------------
+
+  function simulate(dt) {
+    if (mode === 'demo') {
+      const n = Math.round(dt / cfg.substep);
+      for (let i = 0; i < n; i++) {
+        const stepInput = demoClock === null ? { fx: 0, fy: B.G, omega: 0, alpha: 0 } : demoInput();
+        B.step(state, stepInput, cfg.substep);
+        if (demoClock !== null) demoClock += cfg.substep;
+      }
+    } else if (mode === 'play') {
+      B.advance(state, input, dt);
+    }
+    if (state.impact > 0.6 && navigator.vibrate) navigator.vibrate(Math.min(30, 8 + state.impact * 6));
+    state.impact = 0;
+    if (state.catches !== shownCatches) {
+      shownCatches = state.catches;
+      const count = $('count');
+      count.textContent = String(shownCatches);
+      count.classList.remove('pop');
+      void count.offsetWidth;
+      count.classList.add('pop');
+      if (navigator.vibrate) navigator.vibrate([20, 40, 40]);
+    }
+  }
+
+  // Dessin -------------------------------------------------------------------
+
+  let W = 0, H = 0, scale = 1, originX = 0, originY = 0;
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const reach = cfg.stringLength + cfg.ballRadius + 0.012;
+    scale = Math.min(W / (2 * reach), H / (2.4 * reach));
+    originX = W / 2;
+    originY = H * 0.54;
+    $('landscape').hidden = !(W > H && mode !== 'menu');
+  }
+
+  const px = (x) => originX + x * scale;
+  const py = (y) => originY - y * scale;
+
+  function drawHandle() {
+    const w = 0.012 * scale;
+    const grad = ctx.createLinearGradient(px(0) - w, 0, px(0) + w, 0);
+    grad.addColorStop(0, color('--beech-dark'));
+    grad.addColorStop(0.45, color('--beech'));
+    grad.addColorStop(1, color('--beech-dark'));
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.roundRect(px(0) - w, py(0.09), 2 * w, 0.2 * scale, w);
+    ctx.fill();
+  }
+
+  function drawCup() {
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 2 * cfg.wallThickness * scale;
+    ctx.strokeStyle = color('--beech');
+    ctx.fillStyle = color('--beech-dark');
+    ctx.beginPath();
+    B.CUP.forEach(([x, y], i) => (i ? ctx.lineTo(px(x), py(y)) : ctx.moveTo(px(x), py(y))));
+    ctx.stroke();
+  }
+
+  function drawString() {
+    const bx = px(state.x);
+    const by = py(state.y);
+    const d = Math.hypot(state.x, state.y);
+    // Fil détendu : il pend du côté où la force apparente l'entraîne.
+    const slack = Math.sqrt(Math.max(0, cfg.stringLength ** 2 - d * d)) * 0.6 * scale;
+    const f = Math.hypot(input.fx, input.fy) || 1;
+    const live = mode === 'play' ? input : { fx: 0, fy: B.G };
+    const mx = (originX + bx) / 2 - (live.fx / f) * slack;
+    const my = (originY + by) / 2 + (live.fy / f) * slack;
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = color('--chalk');
+    ctx.beginPath();
+    ctx.moveTo(originX, originY);
+    ctx.quadraticCurveTo(mx, my, bx, by);
+    ctx.stroke();
+  }
+
+  function drawBall() {
+    const r = cfg.ballRadius * scale;
+    const x = px(state.x);
+    const y = py(state.y);
+    const grad = ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.1, x, y, r);
+    grad.addColorStop(0, '#ef7a63');
+    grad.addColorStop(0.6, color('--ball'));
+    grad.addColorStop(1, '#8c2a1e');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function draw() {
+    ctx.fillStyle = color('--felt');
+    ctx.fillRect(0, 0, W, H);
+    drawHandle();
+    drawString();
+    drawBall();
+    drawCup();
+  }
+
+  function setHint(text) {
+    $('hint').textContent = text;
+  }
+
+  function updateDiag() {
+    if ($('diag').hidden) return;
+    $('diag').textContent = [
+      `mesures ${sensors.samples}  ${sensors.rate.toFixed(0)} Hz`,
+      `f  x ${input.fx.toFixed(1)}  y ${input.fy.toFixed(1)} m/s²`,
+      `ω  ${input.omega.toFixed(2)} rad/s  axe ${detector.axis} ${detector.sign > 0 ? '+' : '−'}`,
+      `signe ${sensors.axisSign || '?'}  mode ${mode}`,
+      `boule ${state.x.toFixed(2)} ${state.y.toFixed(2)} m`,
+    ].join('\n');
+  }
+
+  let lastFrame = performance.now();
+  function frame(now) {
+    const dt = Math.min((now - lastFrame) / 1000, 0.05);
+    lastFrame = now;
+    if (dt > 0) simulate(dt);
+    draw();
+    updateDiag();
+    requestAnimationFrame(frame);
+  }
+
+  // Interface ----------------------------------------------------------------
+
+  $('play').addEventListener('click', startSensors);
+  $('demo').addEventListener('click', startDemo);
+  $('diagToggle').addEventListener('click', () => {
+    const diag = $('diag');
+    diag.hidden = !diag.hidden;
+    $('diagToggle').setAttribute('aria-pressed', String(!diag.hidden));
+  });
+  canvas.addEventListener('pointerdown', (e) => playDemoGesture(e.clientX));
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && mode !== 'menu') keepAwake();
+  });
+  window.addEventListener('resize', resize);
+  document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+
+  window.bilboquetDebug = { state, input, sensors, detector, getMode: () => mode };
+
+  resize();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
