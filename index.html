@@ -111,11 +111,11 @@
 
 <section id="start" class="overlay">
   <h1>Bilboquet</h1>
-  <p>Ton téléphone est le manche. Fais sauter la boule et rattrape-la dans la coupelle.</p>
+  <p>Ton téléphone est le manche. Fais sauter la boule et enfile son trou sur la pointe.</p>
   <ol>
     <li>Verrouille la rotation de l'écran en portrait.</li>
     <li>Tiens le téléphone debout, écran face à toi.</li>
-    <li>Fais balancer la boule, puis donne un coup sec vers le haut en stoppant net.</li>
+    <li>Laisse la boule s'immobiliser, puis donne un coup sec vers le haut en stoppant net.</li>
   </ol>
   <p class="warn">Tiens-le fermement et joue loin de tout ce qui se casse&nbsp;: le geste est vif.</p>
   <p id="startError" hidden></p>
@@ -152,7 +152,6 @@
   let mode = 'menu'; // menu | calibrating | play | demo
   let shownCatches = 0;
   let demoClock = null;
-  let demoMirror = 1;
 
   const clamp = (v, max) => Math.max(-max, Math.min(max, v));
 
@@ -245,19 +244,18 @@
     if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(() => {});
   }
 
-  // Mode sans capteur : chaque appui rejoue le geste de référence, du côté touché.
+  // Mode sans capteur : chaque appui rejoue le geste de référence.
 
   function startDemo() {
     $('start').hidden = true;
     mode = 'demo';
-    setHint('Touche à gauche ou à droite pour lancer la boule.');
+    setHint("Touche l'écran pour lancer la boule.");
   }
 
-  function playDemoGesture(clientX) {
+  function playDemoGesture() {
     if (mode !== 'demo') return;
     const catches = state.catches;
     Object.assign(state, B.createState(), { catches });
-    demoMirror = clientX < window.innerWidth / 2 ? -1 : 1;
     demoClock = 0;
     setHint('');
   }
@@ -265,7 +263,7 @@
   function demoInput() {
     let t = demoClock;
     for (const [ax, ay, d] of B.DEMO_GESTURE) {
-      if (t < d) return { fx: demoMirror * ax, fy: B.G + ay, omega: 0, alpha: 0 };
+      if (t < d) return { fx: ax, fy: B.G + ay, omega: 0, alpha: 0 };
       t -= d;
     }
     demoClock = null;
@@ -327,24 +325,28 @@
     grad.addColorStop(1, color('--beech-dark'));
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.roundRect(px(0) - w, py(0.09), 2 * w, 0.2 * scale, w);
+    ctx.roundRect(px(0) - w, py(B.SPIKE_BASE_Y), 2 * w, (B.SPIKE_BASE_Y + 0.09) * scale, w);
+    ctx.fill();
+    drawSpike();
+  }
+
+  function drawSpike() {
+    const base = 0.012 * scale;
+    const tip = 0.0015 * scale;
+    ctx.fillStyle = color('--beech');
+    ctx.beginPath();
+    ctx.moveTo(px(0) - base, py(B.SPIKE_BASE_Y));
+    ctx.lineTo(px(0) - tip, py(B.TIP_Y));
+    ctx.lineTo(px(0) + tip, py(B.TIP_Y));
+    ctx.lineTo(px(0) + base, py(B.SPIKE_BASE_Y));
+    ctx.closePath();
     ctx.fill();
   }
 
-  function drawCup() {
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.lineWidth = 2 * cfg.wallThickness * scale;
-    ctx.strokeStyle = color('--beech');
-    ctx.fillStyle = color('--beech-dark');
-    ctx.beginPath();
-    B.CUP.forEach(([x, y], i) => (i ? ctx.lineTo(px(x), py(y)) : ctx.moveTo(px(x), py(y))));
-    ctx.stroke();
-  }
-
   function drawString() {
-    const bx = px(state.x);
-    const by = py(state.y);
+    // Le fil est noué à l'opposé du trou.
+    const bx = px(state.x - cfg.ballRadius * Math.cos(state.angle));
+    const by = py(state.y - cfg.ballRadius * Math.sin(state.angle));
     const d = Math.hypot(state.x, state.y);
     // Fil détendu : il pend du côté où la force apparente l'entraîne.
     const slack = Math.sqrt(Math.max(0, cfg.stringLength ** 2 - d * d)) * 0.6 * scale;
@@ -372,6 +374,17 @@
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
+
+    // Le trou, découpé dans le disque de la boule
+    ctx.save();
+    ctx.clip();
+    ctx.translate(x, y);
+    ctx.rotate(-state.angle); // l'axe y du canvas descend : l'angle change de sens
+    ctx.fillStyle = color('--felt-deep');
+    ctx.beginPath();
+    ctx.rect(r - cfg.holeDepth * scale, -cfg.holeHalfWidth * scale, cfg.holeDepth * scale + 1, 2 * cfg.holeHalfWidth * scale);
+    ctx.fill();
+    ctx.restore();
   }
 
   function draw() {
@@ -380,7 +393,7 @@
     drawHandle();
     drawString();
     drawBall();
-    drawCup();
+    if (state.engaged) drawSpike();
   }
 
   function setHint(text) {
@@ -417,7 +430,7 @@
     diag.hidden = !diag.hidden;
     $('diagToggle').setAttribute('aria-pressed', String(!diag.hidden));
   });
-  canvas.addEventListener('pointerdown', (e) => playDemoGesture(e.clientX));
+  canvas.addEventListener('pointerdown', playDemoGesture);
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && mode !== 'menu') keepAwake();
   });
