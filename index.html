@@ -220,7 +220,7 @@
       ? DeviceMotionEvent.requestPermission()
       : Promise.resolve('granted');
     permission.then((answer) => {
-      if (answer !== 'granted') return showStartError("L'accès aux capteurs a été refusé. Ferme l'onglet et rouvre la page pour répondre à nouveau.");
+      if (answer !== 'granted') return showStartError("Ton navigateur a refusé l'accès aux capteurs de mouvement. Certains, comme Brave, les bloquent par défaut : ouvre cette page dans Chrome sur Android ou Safari sur iPhone.");
       window.addEventListener('devicemotion', onMotion);
       $('start').hidden = true;
       mode = 'calibrating';
